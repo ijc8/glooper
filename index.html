@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>WebSocket demo</title>
+</head>
+<body>
+  <script>
+   var ws = new WebSocket("ws://127.0.0.1:8765/");
+   ws.binaryType = 'arraybuffer';
+
+   ws.onopen = function(event) {
+     const node = document.getElementsByClassName("input")[0];
+     node.addEventListener("keyup", function(event) {
+       if (event.key === "Enter") {
+         sendMessage(node.value);
+       }
+     });
+   }
+
+   ws.onmessage = function(e) {
+     var event = JSON.parse(e.data);
+     console.log(event);
+     if (event[0] === 'audio') {
+       processChunk(event[1]);
+     } else if (event[0] === 'msg') {
+       showMessage(`${event[1]}: ${event[2]}`);
+     } else if (event[0] === 'join') {
+       showMessage(`${event[1]} has arrived! :-)`);
+     } else if (event[0] === 'leave') {
+       showMessage(`${event[1]} has departed. :-(`);
+     }
+   }
+
+   function sendMessage(msg) {
+     ws.send(JSON.stringify(['msg', node.value]));
+     var strbuf = new TextEncoder("utf-8").encode(msg);
+     var msgbuf = new Uint8Array(strbuf.length + 1);
+     msgbuf.subarray(1).set(strbuf);
+     msgbuf[0] = 1;
+     ws.send(msgbuf);
+   }
+
+   function showMessage(msg) {
+     console.log(msg);
+     var messages = document.getElementsByTagName('ul')[0],
+         message = document.createElement('li'),
+         content = document.createTextNode(msg);
+     message.appendChild(content);
+     messages.appendChild(message);
+     document.body.appendChild(messages);
+   }
+
+   function sendChunk(chunk) {
+     // TODO
+   }
+
+   var data = [];
+   function processChunk(chunk) {
+     data.push(...chunk);
+   }
+
+   // create web audio api context
+   var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+   // create Oscillator node
+   var oscillator = audioCtx.createOscillator();
+
+   oscillator.type = 'square';
+   oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // value in hertz
+   //oscillator.connect(audioCtx.destination);
+   //oscillator.start();
+
+   const bufferSize = 256;
+
+   const handleSuccess = function(stream) {
+     //const context = new AudioContext();
+     //const source = context.createMediaStreamSource(stream);
+     const source = audioCtx.createMediaStreamSource(stream);
+     //const processor = context.createScriptProcessor(1024, 1, 1);
+     const processor = audioCtx.createScriptProcessor(bufferSize, 1, 0);
+
+     source.connect(processor);
+     //source.connect(audioCtx.destination);
+     processor.connect(audioCtx.destination);
+
+     processor.onaudioprocess = function(e) {
+       // Note: JSON.stringify is NOT a reasonable way to encode samples
+       ws.send(JSON.stringify(['audio', Array.from(e.inputBuffer.getChannelData(0))]));
+     };
+   };
+
+   navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+       .then(handleSuccess);
+
+   processNode = audioCtx.createScriptProcessor(bufferSize, 0, 1);
+   processNode.onaudioprocess = function (e) {
+     var channel = e.outputBuffer.getChannelData(0);
+     var n = Math.min(channel.length, data.length);
+     //for (var i = 0; i < n; ++i) {
+     //  left[i] = (Math.random() * 2.0) - 1.0;
+     //  right[i] = (Math.random() * 2.0) - 1.0;
+     //}
+     for (var i = 0; i < n; i++) {
+       channel[i] = data[i];
+     }
+     data.splice(0, n);
+   }
+
+   processNode.connect(audioCtx.destination);
+  </script>
+  <ul></ul>
+  <input class="input" type="text" />
+  <input type="file" accept="audio/*" capture id="recorder">
+</body>
+</html>
