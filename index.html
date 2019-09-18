@@ -18,31 +18,50 @@
    }
 
    ws.onmessage = function(e) {
-     var event = JSON.parse(e.data);
-     if (event[0] === 'audio') {
-       processChunk(event[1]);
-     } else if (event[0] === 'msg') {
-       showMessage(`${event[1]}: ${event[2]}`);
-     } else if (event[0] === 'join') {
-       showMessage(`${event[1]} has arrived! :-)`);
-     } else if (event[0] === 'leave') {
-       showMessage(`${event[1]} has departed. :-(`);
+     var packet = parsePacket(e.data);
+     if (packet.type === 'audio') {
+       processChunk(packet.data);
+     } else if (packet.type === 'message') {
+       showMessage(`${packet.user}: ${packet.message}`);
+     } else if (packet.type === 'join') {
+       showMessage(`${packet.user} has arrived! :-)`);
+     } else if (packet.type === 'leave') {
+       showMessage(`${packet.user} has departed. :-(`);
      }
    }
 
    ws.onclose = function(e) {
-     micProcessor.disconnect();
+     if (micProcessor) micProcessor.disconnect();
+     if (remoteProcessor) remoteProcessor.disconnect();
    }
 
    // Protocol types.
    const AUDIO = 0;
    const MESSAGE = 1;
+   const OBJECT = 2;
+
+   function parsePacket(raw) {
+     let tag = (new DataView(raw)).getUint32(0, true);
+     let payload = new Uint8Array((new Uint8Array(raw)).buffer, 4);
+     if (tag == AUDIO) {
+       let data = new Float32Array(payload.buffer);
+       return {type: 'audio', data};
+     } else if (tag == OBJECT) {
+       let str = new TextDecoder("utf-8").decode(payload);
+       console.log(str);
+       let obj = JSON.parse(str);
+       return obj;
+     }
+     console.log(`error: unknown tag ${tag}`);
+     return null;
+   }
 
    function sendMessage(msg) {
      var strbuf = new TextEncoder("utf-8").encode(msg);
-     var packet = new Uint8Array(strbuf.length + 1);
-     packet.subarray(1).set(strbuf);
-     packet[0] = MESSAGE;
+     var packet = new Uint8Array(strbuf.length + 4);
+     packet.subarray(4).set(strbuf);
+     (new DataView(packet.buffer)).setUint32(0, MESSAGE, true);
+     console.log(packet);
      ws.send(packet);
    }
 
@@ -57,22 +76,22 @@
    }
 
    function sendChunk(chunk) {
-     var packet = new Uint8Array(chunk.buffer.byteLength + 1);
-     packet.subarray(1).set(new Uint8Array(chunk.buffer));
-     packet[0] = AUDIO;
+     var packet = new Uint8Array(chunk.buffer.byteLength + 4);
+     packet.subarray(4).set(new Uint8Array(chunk.buffer));
+     (new Uint32Array(packet.buffer))[0] = AUDIO;
      ws.send(packet);
    }
 
-   var data = [];
+   var queue = [];
    function processChunk(chunk) {
-     data.push(...chunk);
+     queue.push(chunk);
    }
 
    // create web audio api context
    var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-   const bufferSize = 1024;
    var micProcessor;
+
+   const bufferSize = 512;
 
    const handleSuccess = function(stream) {
      // Got permission to use the mic - upload samples to server.
@@ -83,7 +102,14 @@
      micProcessor.connect(audioCtx.destination);
 
      micProcessor.onaudioprocess = function(e) {
-       sendChunk(e.inputBuffer.getChannelData(0));
+       let data = e.inputBuffer.getChannelData(0);
+       //sendChunk(data);
+       if (recordingPos >= 0) {
+         console.log(recordingPos);
+         console.log(data);
+         recordingBuffer.copyToChannel(data, 0, recordingPos);
+         recordingPos += data.length;
+       }
      };
    };
 
@@ -93,18 +119,35 @@
    // Play received data from server.
    remoteProcessor = audioCtx.createScriptProcessor(bufferSize, 0, 1);
    remoteProcessor.onaudioprocess = function (e) {
-     var out = e.outputBuffer.getChannelData(0);
-     var n = Math.min(out.length, data.length);
-     for (var i = 0; i < n; i++) {
-       out[i] = data[i];
+     if (queue.length) {
+       e.outputBuffer.copyToChannel(queue.shift(), 0);
+     } else {
+       console.log("audio underrun!");
      }
-     data.splice(0, n);
+   }
+
+   var recordingPos = -1;
+   var recordingBuffer = audioCtx.createBuffer(1, 5 * audioCtx.sampleRate, audioCtx.sampleRate);
+
+   function record() {
+     console.log("start recording");
+     recordingPos = 0;
+     setTimeout(function () {
+       console.log("stop recording");
+       recordingPos = -1;
+       let bufferSource = audioCtx.createBufferSource();
+       bufferSource.buffer = recordingBuffer;
+       bufferSource.loop = true;
+       bufferSource.connect(audioCtx.destination);
+       bufferSource.start(0);
+     }, 5000);
    }
 
    remoteProcessor.connect(audioCtx.destination);
   </script>
-  <ul></ul>
-  <input id="input" type="text" />
-  <input type="file" accept="audio/*" capture id="recorder">
+  <input id="recording-name" type="text" />
+  <button onclick="record()">Record</button>
+  <ul style="border: 1px solid black"></ul>
+  Chat: <input id="input" type="text" /><br/>
 </body>
 </html>

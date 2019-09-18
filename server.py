@@ -17,10 +17,11 @@ USERS = {}
 
 AUDIO = 0
 MESSAGE = 1
+OBJECT = 2
 
-# For now, if the first byte is null, the rest of the packet is raw audio data.
-# Otherwise, the entire packet is JSON.
-AUDIO_TAG = bytes([AUDIO])
+AUDIO_TAG = AUDIO.to_bytes(4, byteorder='little')
+MESSAGE_TAG = MESSAGE.to_bytes(4, byteorder='little')
+OBJECT_TAG = OBJECT.to_bytes(4, byteorder='little')
 
 async def broadcast_data(data):
     if USERS:  # asyncio.wait doesn't accept an empty list
@@ -29,20 +30,20 @@ async def broadcast_data(data):
 def broadcast_audio(audio):
     return broadcast_data(AUDIO_TAG + audio)
 
-def broadcast_event(event_type, *data):
-    return broadcast_data(json.dumps((event_type, *data)))
+def broadcast_object(obj):
+    return broadcast_data(OBJECT_TAG + json.dumps(obj).encode('utf8'))
 
 async def register(websocket):
     name = available_names.pop()
     USERS[websocket] = name
-    await broadcast_event('join', name)
+    await broadcast_object({'type': 'join', 'user': name})
     return name
 
 async def unregister(websocket):
     name = USERS[websocket]
     available_names.append(name)
     del USERS[websocket]
-    await broadcast_event('leave', name)
+    await broadcast_object({'type': 'leave', 'user': name})
 
 async def chat(websocket, path):
     name = await register(websocket)
@@ -50,12 +51,10 @@ async def chat(websocket, path):
     try:
         async for packet in websocket:
             if packet.startswith(AUDIO_TAG):
-                arr = array.array('f')
-                arr.frombytes(packet[1:])
-                await broadcast_event('audio', list(arr))
-            elif packet[0] == MESSAGE:
-                print(name, packet[1:])
-                await broadcast_event('msg', name, packet[1:])
+                await broadcast_audio(packet[len(AUDIO_TAG):])
+            elif packet.startswith(MESSAGE_TAG):
+                message = packet[len(MESSAGE_TAG):].decode('utf8')
+                await broadcast_object({'type': 'message', 'user': name, 'message': message})
     finally:
         await unregister(websocket)
 
