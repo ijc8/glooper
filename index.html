@@ -112,112 +112,237 @@
       remoteProcessor.connect(audioCtx.destination);
     */
 
-   var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-   var micProcessor;
+   // Wild idea: what if the playback rate doubles as the recording rate?
+   // so you can record at different rates, record backwards, etc.
+   // then slider bubble can simply turn red for recording
+   // Special case: if playback rate is 0 when you hit record, automatically change to 1?
+   // Alternative terminology: 'loops' vs 'tapes'
+   // Name idea: grouper looper. group's loops. etc.
+   // Note: AudioBufferSourceNode.playbackRate is an AudioParam!
+   // So is detune. Interesting.
+   // TODO: make the playback rate fields work.
+   // TODO: track playback position using audioCtx.currentTime, update sliders.
+   // TODO: websocket server for sharing tapes.
 
-   const bufferSize = 512;
+   let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+   let microphone;
+   let micProcessor;
 
-   const handleSuccess = function(stream) {
+   const bufferSize = 0;
+
+   const handleSuccess = (stream) => {
      // Got permission to use the mic; start processing samples.
-     const source = audioCtx.createMediaStreamSource(stream);
-     micProcessor = audioCtx.createScriptProcessor(bufferSize, 1, 0);
+     microphone = audioCtx.createMediaStreamSource(stream);
+     /*micProcessor = audioCtx.createScriptProcessor(bufferSize, 1, 0);
 
-     source.connect(micProcessor);
-     micProcessor.connect(audioCtx.destination);
+     microphone.connect(micProcessor);
 
      micProcessor.onaudioprocess = function(e) {
        let data = e.inputBuffer.getChannelData(0);
        //sendChunk(data);
-       if (recordingPos >= 0 && recordPos < data.length) {
-         console.log(recordingPos);
-         console.log(data);
+       if (recordingPos >= 0 && recordingPos < recordingBuffer.length) {
          recordingBuffer.copyToChannel(data, 0, recordingPos);
          recordingPos += data.length;
        }
-     };
+     };*/
    };
 
    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
        .then(handleSuccess);
 
-   var recordingPos = -1;
-   var recordingBuffer = audioCtx.createBuffer(1, 5 * audioCtx.sampleRate, audioCtx.sampleRate);
-   var bufferSources = [];
+   // buffer, source, rate, startTime, startPos.
+   let tapes = {};
 
    function createTape() {
+     // To satisfy Chrome's demands:
+     if (audioCtx.state === "suspended")
+       audioCtx.resume().then(_createTape);
+     else
+       _createTape();
+   }
+
+   // TODO make this an actual class
+   function getPos(tape) {
+     let pos = ((audioCtx.currentTime - tape.startTime) * tape.rate + tape.startPos);
+     return pos % tape.buffer.duration;
+   }
+
+   function setRate(tape, rate) {
+     // Reset startPos and startTime since we're changing playbackRate. Order matters.
+     tape.startPos = getPos(tape);
+     tape.startTime = audioCtx.currentTime;
+
+     tape.rate = rate;
+
+     if (rate < 0) {
+       // TODO Workaround this.
+       console.log("negative playback rates not supported by web audio...");
+     } else if (rate === 0) {
+       // Also not supported, but here's a workaround.
+       if (tape.source) {
+         tape.source.disconnect();
+         tape.source = null;
+       }
+     } else {
+       if (!tape.source) {
+         let source = audioCtx.createBufferSource();
+         source.buffer = tape.buffer;
+         source.loop = true;
+         source.connect(audioCtx.destination);
+         source.start(0);
+         tape.source = source;
+       }
+       tape.source.playbackRate.value = rate;
+     }
+   }
+
+   function _createTape() {
      let name = document.getElementById("tape-name").value;
      let length = parseFloat(document.getElementById("tape-length").value);
      console.log(name, length);
+     let buffer = audioCtx.createBuffer(1, length * audioCtx.sampleRate, audioCtx.sampleRate);
+     let tape = {
+       buffer: buffer,
+       source: null,
+       rate: 0,
+       startTime: audioCtx.currentTime,
+       startPos: 0
+     };
+     tapes[name] = tape;
+
+     // Create new table entry from template.
+     let table = document.getElementById("tape-table");
+     let template = document.getElementById("tape-row-template");
+     let entry = template.cloneNode(true);
+     entry.hidden = false;
+     entry.id = "";
+     entry.getElementsByClassName("tape-name")[0].innerHTML = name;
+     entry.getElementsByClassName("tape-length")[0].innerHTML = length;
+     let pos = entry.getElementsByClassName("tape-position")[0];
+     pos.id = `${name}-position`;
+     let rate = entry.getElementsByClassName("tape-rate")[0];
+     rate.value = 0;
+     rate.onchange = (e) => {
+       let value = parseFloat(e.target.value);
+       setRate(tape, value);
+     }
+     table.appendChild(entry);
+
+     // Add new source and destination options.
+     for (let id of ["record-src", "record-dst"]) {
+      let select = document.getElementById(id);
+      let option = document.createElement("option");
+      option.innerHTML = name;
+      select.appendChild(option);
+     }
    }
+
+   var hmm = null;
 
    function record() {
      console.log("start recording");
-     recordingPos = 0;
-     setTimeout(function () {
-       console.log("stop recording");
-       recordingPos = -1;
-       let bufferSource = audioCtx.createBufferSource();
-       bufferSource.buffer = recordingBuffer;
-       bufferSource.loop = true;
-       bufferSource.connect(audioCtx.destination);
-       bufferSource.start(0);
-       bufferSources.push(bufferSource);
-     }, 5000);
+     let srcSelect = document.getElementById("record-src");
+     let dstSelect = document.getElementById("record-dst");
+     let src = null;
+     let dst = dstSelect.options[dstSelect.selectedIndex].text;
+     if (srcSelect.selectedIndex === 0) {
+       console.log("error: no source selected.");
+       return;
+     } else if (srcSelect.selectedIndex === 1) {
+       src = microphone;
+     } else {
+       src = tapes[srcSelect.options[srcSelect.selectedIndex].text].source;
+     }
+
+     if (dstSelect.selectedIndex === 0) {
+       console.log("error: no source selected.");
+       return;
+     } else {
+       dst = tapes[dstSelect.options[dstSelect.selectedIndex].text];
+     }
+
+     // Chrome bug requires us to add a dummy output:
+     // https://bugs.chromium.org/p/chromium/issues/detail?id=327649#c15
+     recorder = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+     recorder.connect(audioCtx.destination);
+     hmm = recorder;
+     console.log(hmm);
+
+     let pos = 0;
+     recorder.onaudioprocess = (e) => {
+       // TODO Allow recording to start anywhere, handle wrapping,
+       // and maybe make stopping recording a separate action.
+       if (pos > dst.buffer.length) {
+         console.log('stop recording');
+         src.disconnect(recorder);
+         recorder.disconnect();
+
+         // Browsers differ re. modifying the source's buffer, so let's just do this:
+         if (dst.source) {
+           dst.source.disconnect();
+           dst.source = null;
+         }
+         setRate(dst, dst.rate);
+         return;
+       }
+       let data = e.inputBuffer.getChannelData(0);
+       dst.buffer.copyToChannel(data, 0, pos);
+       pos += data.length;
+     };
+
+     src.connect(recorder);
    }
+
+   function updatePositions() {
+     for (let name in tapes) {
+       console.log(name);
+       let tape = tapes[name];
+       let slider = document.getElementById(`${name}-position`);
+       let time = audioCtx.currentTime;
+       slider.value = getPos(tape) / tape.buffer.duration * parseFloat(slider.max);
+     }
+     setTimeout(updatePositions, 30);
+   }
+
+   updatePositions();
   </script>
   <div class="container mt-4">
-    <h2>Actions</h2>
-    <form class="form-horizontal">
-      <div class="form-group form-row align-items-center">
-        <label class="col-md-auto my-1 mr-2" for="tape-name">
-          Create a blank tape named
-        </label>
-        <input id="tape-name" type="text" class="col col-md-2 form-control my-1 mr-2" placeholder="Jimbo" />
-        <label class="col-md-auto my-1 mr-2" for="tape-length">
-          which is
-        </label>
-        <input id="tape-length" class="col col-md-1 form-control my-1 mr-2" type="number" />
-        <span class="col-md-auto my-1 mr-2">
-          seconds long.
-        </span>
-        <button type="button" class="col-md-auto btn btn-primary" onclick="createTape()">Create tape</button><br/>
+    <form>
+      <div class="form-row align-items-center">
+        <input id="tape-name" type="text" class="col-4 form-control my-1 mr-2" placeholder="Name" />
+        <input id="tape-length" class="col-4 form-control my-1 mr-2" type="number" placeholder="Length (seconds)" />
+        <button type="button" class="col-2 form-control btn btn-success" onclick="createTape()">Create tape</button><br/>
       </div>
     </form>
-    <form class="form-horizontal">
-      <div class="form-group form-row align-items-center">
-        <label class="col-md-auto my-1 mr-2" for="record-dst">
-          Record to
-        </label>
-        <select id="record-dst" class="col-md-2 custom-select my-1 mr-2">
-          <option>foo</option>
-          <option>bar</option>
-          <option>baz</option>
+    <form>
+      <div class="form-row align-items-center">
+        <select id="record-src" class="col-4 form-control custom-select my-1 mr-2" placeholder="From">
+          <option value="" disabled selected>Source</option>
+          <option>Microphone</option>
         </select>
-        <label class="col-md-auto my-1 mr-2" for="tape-length">
-          from
-        </label>
-        <select id="record-dst" class="col-md-2 custom-select my-1 mr-2">
-          <option>foo</option>
-          <option>bar</option>
-          <option>baz</option>
+        <select id="record-dst" class="col-4 custom-select my-1 mr-2" placeholder="To">
+          <option value="" disabled selected>Destination</option>
         </select>
-        <button type="button" class="col-md-auto btn btn-danger" onclick="record()">Record</button><br/>
+        <button type="button" class="col-2 form-control btn btn-danger" onclick="record()">Record</button><br/>
       </div>
     </form>
+    <hr>
     <h2>Tapes</h2>
     <table class="table">
       <thead>
         <tr>
           <th scope="col">Name</th>
           <th scope="col">Position</th>
+          <th scope="col">Length</th>
           <th scope="col">Playback Rate</th>
         </tr>
       </thead>
-      <tbody>
-        <tr>
-          <th scope="row">Foobar</th>
-          <td><input type="range" class="custom-range"></td>
-          <td><input type="number"></td>
+      <tbody id="tape-table">
+        <tr id="tape-row-template" hidden>
+          <th class="tape-name" scope="row">Foobar</th>
+          <td><input type="range" class="tape-position custom-range" min="0" max="1000"></td>
+          <td class="tape-length">5</td>
+          <td><input class="tape-rate" type="number"></td>
         </tr>
       </tbody>
     </table>
