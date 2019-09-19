@@ -1,100 +1,124 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <!-- Bootstrap CSS -->
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+
+  <style>
+   #tape-length {
+
+   };
+  </style>
+
   <title>WebSocket demo</title>
 </head>
-<body>
+<body class="bg-light">
   <script>
-   var ws = new WebSocket("ws://127.0.0.1:8765/");
-   ws.binaryType = 'arraybuffer';
+   /* var ws = new WebSocket("ws://127.0.0.1:8765/");
+    * ws.binaryType = 'arraybuffer';
 
-   ws.onopen = function(event) {
-     const node = document.getElementById("input");
-     node.addEventListener("keyup", function(event) {
-       if (event.key === "Enter") {
-         sendMessage(node.value);
-       }
-     });
-   }
+    * ws.onopen = function(event) {
+    *   const node = document.getElementById("input");
+    *   node.addEventListener("keyup", function(event) {
+    *     if (event.key === "Enter") {
+    *       sendMessage(node.value);
+    *     }
+    *   });
+    * }
 
-   ws.onmessage = function(e) {
-     var packet = parsePacket(e.data);
-     if (packet.type === 'audio') {
-       processChunk(packet.data);
-     } else if (packet.type === 'message') {
-       showMessage(`${packet.user}: ${packet.message}`);
-     } else if (packet.type === 'join') {
-       showMessage(`${packet.user} has arrived! :-)`);
-     } else if (packet.type === 'leave') {
-       showMessage(`${packet.user} has departed. :-(`);
-     }
-   }
+    * ws.onmessage = function(e) {
+    *   var packet = parsePacket(e.data);
+    *   if (packet.type === 'audio') {
+    *     processChunk(packet.data);
+    *   } else if (packet.type === 'message') {
+    *     showMessage(`${packet.user}: ${packet.message}`);
+    *   } else if (packet.type === 'join') {
+    *     showMessage(`${packet.user} has arrived! :-)`);
+    *   } else if (packet.type === 'leave') {
+    *     showMessage(`${packet.user} has departed. :-(`);
+    *   }
+    * }
 
-   ws.onclose = function(e) {
-     if (micProcessor) micProcessor.disconnect();
-     if (remoteProcessor) remoteProcessor.disconnect();
-   }
+    * ws.onclose = function(e) {
+    *   if (micProcessor) micProcessor.disconnect();
+    *   if (remoteProcessor) remoteProcessor.disconnect();
+    * }
 
-   // Protocol types.
-   const AUDIO = 0;
-   const MESSAGE = 1;
-   const OBJECT = 2;
+    * // Protocol types.
+    * const AUDIO = 0;
+    * const MESSAGE = 1;
+    * const OBJECT = 2;
 
-   function parsePacket(raw) {
-     let tag = (new DataView(raw)).getUint32(0, true);
-     let payload = new Uint8Array((new Uint8Array(raw)).buffer, 4);
-     if (tag == AUDIO) {
-       let data = new Float32Array(payload.buffer);
-       return {type: 'audio', data};
-     } else if (tag == OBJECT) {
-       let str = new TextDecoder("utf-8").decode(payload);
-       console.log(str);
-       let obj = JSON.parse(str);
-       return obj;
-     }
-     console.log(`error: unknown tag ${tag}`);
-     return null;
-   }
+    * function parsePacket(raw) {
+    *   let tag = (new DataView(raw)).getUint32(0, true);
+    *   let payload = new Uint8Array((new Uint8Array(raw)).buffer, 4);
+    *   if (tag == AUDIO) {
+    *     let data = new Float32Array(payload.buffer);
+    *     return {type: 'audio', data};
+    *   } else if (tag == OBJECT) {
+    *     let str = new TextDecoder("utf-8").decode(payload);
+    *     console.log(str);
+    *     let obj = JSON.parse(str);
+    *     return obj;
+    *   }
+    *   console.log(`error: unknown tag ${tag}`);
+    *   return null;
+    * }
 
-   function sendMessage(msg) {
-     var strbuf = new TextEncoder("utf-8").encode(msg);
-     var packet = new Uint8Array(strbuf.length + 4);
-     packet.subarray(4).set(strbuf);
-     (new DataView(packet.buffer)).setUint32(0, MESSAGE, true);
-     console.log(packet);
-     ws.send(packet);
-   }
+    * function sendMessage(msg) {
+    *   var strbuf = new TextEncoder("utf-8").encode(msg);
+    *   var packet = new Uint8Array(strbuf.length + 4);
+    *   packet.subarray(4).set(strbuf);
+    *   (new DataView(packet.buffer)).setUint32(0, MESSAGE, true);
+    *   console.log(packet);
+    *   ws.send(packet);
+    * }
 
-   function showMessage(msg) {
-     console.log(msg);
-     var messages = document.getElementsByTagName('ul')[0],
-         message = document.createElement('li'),
-         content = document.createTextNode(msg);
-     message.appendChild(content);
-     messages.appendChild(message);
-     document.body.appendChild(messages);
-   }
+    * function showMessage(msg) {
+    *   console.log(msg);
+    *   var messages = document.getElementsByTagName('ul')[0],
+    *       message = document.createElement('li'),
+    *       content = document.createTextNode(msg);
+    *   message.appendChild(content);
+    *   messages.appendChild(message);
+    *   document.body.appendChild(messages);
+    * }
 
-   function sendChunk(chunk) {
-     var packet = new Uint8Array(chunk.buffer.byteLength + 4);
-     packet.subarray(4).set(new Uint8Array(chunk.buffer));
-     (new Uint32Array(packet.buffer))[0] = AUDIO;
-     ws.send(packet);
-   }
+    * function sendChunk(chunk) {
+    *   var packet = new Uint8Array(chunk.buffer.byteLength + 4);
+    *   packet.subarray(4).set(new Uint8Array(chunk.buffer));
+    *   (new Uint32Array(packet.buffer))[0] = AUDIO;
+    *   ws.send(packet);
+    * }
 
-   var queue = [];
-   function processChunk(chunk) {
-     queue.push(chunk);
-   }
+    * var queue = [];
+    * function processChunk(chunk) {
+    *   queue.push(chunk);
+    * }
 
-   // create web audio api context
+      // Play received data from server.
+      /* remoteProcessor = audioCtx.createScriptProcessor(bufferSize, 0, 1);
+    * remoteProcessor.onaudioprocess = function (e) {
+    *   if (queue.length) {
+    *     e.outputBuffer.copyToChannel(queue.shift(), 0);
+    *   } else {
+    *     console.log("audio underrun!");
+    *   }
+    * }
+
+      remoteProcessor.connect(audioCtx.destination);
+    */
+
    var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
    var micProcessor;
 
    const bufferSize = 512;
 
    const handleSuccess = function(stream) {
-     // Got permission to use the mic - upload samples to server.
+     // Got permission to use the mic; start processing samples.
      const source = audioCtx.createMediaStreamSource(stream);
      micProcessor = audioCtx.createScriptProcessor(bufferSize, 1, 0);
 
@@ -104,7 +128,7 @@
      micProcessor.onaudioprocess = function(e) {
        let data = e.inputBuffer.getChannelData(0);
        //sendChunk(data);
-       if (recordingPos >= 0) {
+       if (recordingPos >= 0 && recordPos < data.length) {
          console.log(recordingPos);
          console.log(data);
          recordingBuffer.copyToChannel(data, 0, recordingPos);
@@ -116,18 +140,15 @@
    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
        .then(handleSuccess);
 
-   // Play received data from server.
-   remoteProcessor = audioCtx.createScriptProcessor(bufferSize, 0, 1);
-   remoteProcessor.onaudioprocess = function (e) {
-     if (queue.length) {
-       e.outputBuffer.copyToChannel(queue.shift(), 0);
-     } else {
-       console.log("audio underrun!");
-     }
-   }
-
    var recordingPos = -1;
    var recordingBuffer = audioCtx.createBuffer(1, 5 * audioCtx.sampleRate, audioCtx.sampleRate);
+   var bufferSources = [];
+
+   function createTape() {
+     let name = document.getElementById("tape-name").value;
+     let length = parseFloat(document.getElementById("tape-length").value);
+     console.log(name, length);
+   }
 
    function record() {
      console.log("start recording");
@@ -140,14 +161,71 @@
        bufferSource.loop = true;
        bufferSource.connect(audioCtx.destination);
        bufferSource.start(0);
+       bufferSources.push(bufferSource);
      }, 5000);
    }
-
-   remoteProcessor.connect(audioCtx.destination);
   </script>
-  <input id="recording-name" type="text" />
-  <button onclick="record()">Record</button>
-  <ul style="border: 1px solid black"></ul>
-  Chat: <input id="input" type="text" /><br/>
+  <div class="container mt-4">
+    <h2>Actions</h2>
+    <form class="form-horizontal">
+      <div class="form-group form-row align-items-center">
+        <label class="col-md-auto my-1 mr-2" for="tape-name">
+          Create a blank tape named
+        </label>
+        <input id="tape-name" type="text" class="col col-md-2 form-control my-1 mr-2" placeholder="Jimbo" />
+        <label class="col-md-auto my-1 mr-2" for="tape-length">
+          which is
+        </label>
+        <input id="tape-length" class="col col-md-1 form-control my-1 mr-2" type="number" />
+        <span class="col-md-auto my-1 mr-2">
+          seconds long.
+        </span>
+        <button type="button" class="col-md-auto btn btn-primary" onclick="createTape()">Create tape</button><br/>
+      </div>
+    </form>
+    <form class="form-horizontal">
+      <div class="form-group form-row align-items-center">
+        <label class="col-md-auto my-1 mr-2" for="record-dst">
+          Record to
+        </label>
+        <select id="record-dst" class="col-md-2 custom-select my-1 mr-2">
+          <option>foo</option>
+          <option>bar</option>
+          <option>baz</option>
+        </select>
+        <label class="col-md-auto my-1 mr-2" for="tape-length">
+          from
+        </label>
+        <select id="record-dst" class="col-md-2 custom-select my-1 mr-2">
+          <option>foo</option>
+          <option>bar</option>
+          <option>baz</option>
+        </select>
+        <button type="button" class="col-md-auto btn btn-danger" onclick="record()">Record</button><br/>
+      </div>
+    </form>
+    <h2>Tapes</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Position</th>
+          <th scope="col">Playback Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Foobar</th>
+          <td><input type="range" class="custom-range"></td>
+          <td><input type="number"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- for bootstrap -->
+  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
 </body>
 </html>
