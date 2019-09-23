@@ -17,100 +17,70 @@
 </head>
 <body class="bg-light">
   <script>
-   /* var ws = new WebSocket("ws://127.0.0.1:8765/");
-    * ws.binaryType = 'arraybuffer';
+   var ws = new WebSocket("ws://127.0.0.1:8765/");
+   ws.binaryType = 'arraybuffer';
 
-    * ws.onopen = function(event) {
-    *   const node = document.getElementById("input");
-    *   node.addEventListener("keyup", function(event) {
-    *     if (event.key === "Enter") {
-    *       sendMessage(node.value);
-    *     }
-    *   });
-    * }
+   ws.onopen = function(event) {
+     console.log("connected");
+   }
 
-    * ws.onmessage = function(e) {
-    *   var packet = parsePacket(e.data);
-    *   if (packet.type === 'audio') {
-    *     processChunk(packet.data);
-    *   } else if (packet.type === 'message') {
-    *     showMessage(`${packet.user}: ${packet.message}`);
-    *   } else if (packet.type === 'join') {
-    *     showMessage(`${packet.user} has arrived! :-)`);
-    *   } else if (packet.type === 'leave') {
-    *     showMessage(`${packet.user} has departed. :-(`);
-    *   }
-    * }
+   ws.onmessage = function(e) {
+     receiveTape(JSON.parse(e.data));
+   }
 
-    * ws.onclose = function(e) {
-    *   if (micProcessor) micProcessor.disconnect();
-    *   if (remoteProcessor) remoteProcessor.disconnect();
-    * }
+   function _arrayBufferToBase64(buffer) {
+     var binary = '';
+     var bytes = new Uint8Array(buffer);
+     var len = bytes.byteLength;
+     for (var i = 0; i < len; i++) {
+       binary += String.fromCharCode(bytes[ i ]);
+     }
+     return window.btoa(binary);
+   }
 
-    * // Protocol types.
-    * const AUDIO = 0;
-    * const MESSAGE = 1;
-    * const OBJECT = 2;
+   function _base64ToArrayBuffer(base64) {
+     var binary_string = window.atob(base64);
+     var len = binary_string.length;
+     var bytes = new Uint8Array(len);
+     for (let i = 0; i < len; i++) {
+       bytes[i] = binary_string.charCodeAt(i);
+     }
+     return bytes.buffer;
+   }
 
-    * function parsePacket(raw) {
-    *   let tag = (new DataView(raw)).getUint32(0, true);
-    *   let payload = new Uint8Array((new Uint8Array(raw)).buffer, 4);
-    *   if (tag == AUDIO) {
-    *     let data = new Float32Array(payload.buffer);
-    *     return {type: 'audio', data};
-    *   } else if (tag == OBJECT) {
-    *     let str = new TextDecoder("utf-8").decode(payload);
-    *     console.log(str);
-    *     let obj = JSON.parse(str);
-    *     return obj;
-    *   }
-    *   console.log(`error: unknown tag ${tag}`);
-    *   return null;
-    * }
+   var hmm1, hmm2;
+   function receiveTape(t) {
+     console.log("receiveTape");
+     console.log(t);
+     let name = t.name;
+     console.log(`received string of length ${t.data.length}`);
+     hmm1 = _base64ToArrayBuffer(t.data);
+     console.log(hmm1);
+     let data = new Float32Array(_base64ToArrayBuffer(t.data));
+     console.log(`received buffer of size ${data.length}`);
+     let buffer = audioCtx.createBuffer(1, data.length, audioCtx.sampleRate);
+     buffer.copyToChannel(data, 0);
+     let tape = {
+       buffer,
+       source: null,
+       rate: 0,
+       startPos: 0,
+       startTime: audioCtx.currentTime
+     }
+     tapes[name] = tape;
+     addTape(name, tape);
+   }
 
-    * function sendMessage(msg) {
-    *   var strbuf = new TextEncoder("utf-8").encode(msg);
-    *   var packet = new Uint8Array(strbuf.length + 4);
-    *   packet.subarray(4).set(strbuf);
-    *   (new DataView(packet.buffer)).setUint32(0, MESSAGE, true);
-    *   console.log(packet);
-    *   ws.send(packet);
-    * }
-
-    * function showMessage(msg) {
-    *   console.log(msg);
-    *   var messages = document.getElementsByTagName('ul')[0],
-    *       message = document.createElement('li'),
-    *       content = document.createTextNode(msg);
-    *   message.appendChild(content);
-    *   messages.appendChild(message);
-    *   document.body.appendChild(messages);
-    * }
-
-    * function sendChunk(chunk) {
-    *   var packet = new Uint8Array(chunk.buffer.byteLength + 4);
-    *   packet.subarray(4).set(new Uint8Array(chunk.buffer));
-    *   (new Uint32Array(packet.buffer))[0] = AUDIO;
-    *   ws.send(packet);
-    * }
-
-    * var queue = [];
-    * function processChunk(chunk) {
-    *   queue.push(chunk);
-    * }
-
-      // Play received data from server.
-      /* remoteProcessor = audioCtx.createScriptProcessor(bufferSize, 0, 1);
-    * remoteProcessor.onaudioprocess = function (e) {
-    *   if (queue.length) {
-    *     e.outputBuffer.copyToChannel(queue.shift(), 0);
-    *   } else {
-    *     console.log("audio underrun!");
-    *   }
-    * }
-
-      remoteProcessor.connect(audioCtx.destination);
-    */
+   function sendTape(name, tape) {
+     console.log("sendTape");
+     // very inefficient encoding
+     let encoded = _arrayBufferToBase64(tape.buffer.getChannelData(0).buffer);
+     let serializable = {
+       name,
+       data: encoded
+     }
+     ws.send(JSON.stringify(serializable));
+   }
 
    // Wild idea: what if the playback rate doubles as the recording rate?
    // so you can record at different rates, record backwards, etc.
@@ -120,9 +90,12 @@
    // Name idea: grouper looper. group's loops. etc.
    // Note: AudioBufferSourceNode.playbackRate is an AudioParam!
    // So is detune. Interesting.
-   // TODO: make the playback rate fields work.
-   // TODO: track playback position using audioCtx.currentTime, update sliders.
    // TODO: websocket server for sharing tapes.
+   // TODO: better audio encoding to avoid, possibly chunked tape transfer.
+
+   // when tape is created or recorded, send to the server an object with the tape name and data.
+   // the server sends this to each client.
+   // when the client receives a new tape from the server, it adds it to the local list.
 
    let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
    let microphone;
@@ -131,20 +104,7 @@
    const bufferSize = 0;
 
    const handleSuccess = (stream) => {
-     // Got permission to use the mic; start processing samples.
      microphone = audioCtx.createMediaStreamSource(stream);
-     /*micProcessor = audioCtx.createScriptProcessor(bufferSize, 1, 0);
-
-     microphone.connect(micProcessor);
-
-     micProcessor.onaudioprocess = function(e) {
-       let data = e.inputBuffer.getChannelData(0);
-       //sendChunk(data);
-       if (recordingPos >= 0 && recordingPos < recordingBuffer.length) {
-         recordingBuffer.copyToChannel(data, 0, recordingPos);
-         recordingPos += data.length;
-       }
-     };*/
    };
 
    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
@@ -209,7 +169,12 @@
        startPos: 0
      };
      tapes[name] = tape;
+     sendTape(name, tape);
+     addTape(name, tape);
+   }
 
+   function addTape(name, tape) {
+     let length = tape.buffer.duration;
      // Create new table entry from template.
      let table = document.getElementById("tape-table");
      let template = document.getElementById("tape-row-template");
@@ -221,7 +186,7 @@
      let pos = entry.getElementsByClassName("tape-position")[0];
      pos.id = `${name}-position`;
      let rate = entry.getElementsByClassName("tape-rate")[0];
-     rate.value = 0;
+     rate.value = tape.rate;
      rate.onchange = (e) => {
        let value = parseFloat(e.target.value);
        setRate(tape, value);
@@ -237,14 +202,13 @@
      }
    }
 
-   var hmm = null;
-
    function record() {
      console.log("start recording");
      let srcSelect = document.getElementById("record-src");
      let dstSelect = document.getElementById("record-dst");
      let src = null;
      let dst = dstSelect.options[dstSelect.selectedIndex].text;
+     let dstName = "";
      if (srcSelect.selectedIndex === 0) {
        console.log("error: no source selected.");
        return;
@@ -258,15 +222,15 @@
        console.log("error: no source selected.");
        return;
      } else {
-       dst = tapes[dstSelect.options[dstSelect.selectedIndex].text];
+       dstName = dstSelect.options[dstSelect.selectedIndex].text;
+       dst = tapes[dstName];
      }
 
      // Chrome bug requires us to add a dummy output:
      // https://bugs.chromium.org/p/chromium/issues/detail?id=327649#c15
      recorder = audioCtx.createScriptProcessor(bufferSize, 1, 1);
      recorder.connect(audioCtx.destination);
-     hmm = recorder;
-     console.log(hmm);
+     src.connect(recorder);
 
      let pos = 0;
      recorder.onaudioprocess = (e) => {
@@ -276,6 +240,7 @@
          console.log('stop recording');
          src.disconnect(recorder);
          recorder.disconnect();
+         recorder.onaudioprocess = null;
 
          // Browsers differ re. modifying the source's buffer, so let's just do this:
          if (dst.source) {
@@ -283,19 +248,17 @@
            dst.source = null;
          }
          setRate(dst, dst.rate);
+         sendTape(dstName, dst);
          return;
        }
        let data = e.inputBuffer.getChannelData(0);
        dst.buffer.copyToChannel(data, 0, pos);
        pos += data.length;
      };
-
-     src.connect(recorder);
    }
 
    function updatePositions() {
      for (let name in tapes) {
-       console.log(name);
        let tape = tapes[name];
        let slider = document.getElementById(`${name}-position`);
        let time = audioCtx.currentTime;
