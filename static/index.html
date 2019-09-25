@@ -5,19 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 
   <!-- Bootstrap CSS -->
-  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+  <link rel="stylesheet" href="bootstrap.min.css">
 
   <style>
-   #tape-length {
+   .recording-range::-webkit-slider-thumb {
+     background: #dc3545;
+   }
 
-   };
+   .recording-range::-moz-range-thumb {
+     background: #dc3545;
+   }
+
+   .recording-range::-ms-thumb {
+     background: #dc3545;
+   }
   </style>
 
   <title>WebSocket demo</title>
 </head>
 <body class="bg-light">
   <script>
-   var ws = new WebSocket("ws://127.0.0.1:8765/");
+   // buffer, source, rate, startTime, startPos.
+   let tapes = {};
+
+   var ws = new WebSocket("wss://" + location.hostname + ":8765/");
    ws.binaryType = 'arraybuffer';
 
    ws.onopen = function(event) {
@@ -48,34 +59,51 @@
      return bytes.buffer;
    }
 
-   var hmm1, hmm2;
-   function receiveTape(t) {
+   function receiveTape(obj) {
      console.log("receiveTape");
-     console.log(t);
-     let name = t.name;
-     console.log(`received string of length ${t.data.length}`);
-     hmm1 = _base64ToArrayBuffer(t.data);
-     console.log(hmm1);
-     let data = new Float32Array(_base64ToArrayBuffer(t.data));
-     console.log(`received buffer of size ${data.length}`);
-     let buffer = audioCtx.createBuffer(1, data.length, audioCtx.sampleRate);
-     buffer.copyToChannel(data, 0);
-     let tape = {
-       buffer,
-       source: null,
-       rate: 0,
-       startPos: 0,
-       startTime: audioCtx.currentTime
+     console.log(obj);
+     let name = obj.name;
+     if (obj.event === 'create') {
+       // Create a local blank tape.
+       let buffer = audioCtx.createBuffer(1, obj.length, audioCtx.sampleRate);
+       let tape = {
+         buffer,
+         source: null,
+         rate: 0,
+         startPos: 0,
+         startTime: audioCtx.currentTime
+       }
+       tapes[obj.name] = tape;
+       addTape(obj.name, tape);
+     } else if (obj.event == 'update') {
+       // Update an existing tape with new data.
+       let data = new Float32Array(_base64ToArrayBuffer(obj.data));
+       let tape = tapes[name];
+       let buffer = tape.buffer;
+       buffer.copyToChannel(data, 0);
+       if (tape.source) {
+         tape.source.disconnect();
+         tape.source = null;
+       }
+       setRate(tape, tape.rate);
      }
-     tapes[name] = tape;
-     addTape(name, tape);
    }
 
-   function sendTape(name, tape) {
-     console.log("sendTape");
-     // very inefficient encoding
+   function sendCreate(name, tape) {
+     console.log("sendCreate");
+     ws.send(JSON.stringify({
+       event: 'create',
+       name,
+       length: tape.buffer.length
+     }));
+   }
+
+   function sendUpdate(name, tape) {
+     console.log("sendUpdate");
+     // not the most efficient encoding
      let encoded = _arrayBufferToBase64(tape.buffer.getChannelData(0).buffer);
      let serializable = {
+       event: 'update',
        name,
        data: encoded
      }
@@ -110,9 +138,6 @@
    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
        .then(handleSuccess);
 
-   // buffer, source, rate, startTime, startPos.
-   let tapes = {};
-
    function createTape() {
      // To satisfy Chrome's demands:
      if (audioCtx.state === "suspended")
@@ -124,7 +149,7 @@
    // TODO make this an actual class
    function getPos(tape) {
      let pos = ((audioCtx.currentTime - tape.startTime) * tape.rate + tape.startPos);
-     return pos % tape.buffer.duration;
+     return ((pos % tape.buffer.duration) + tape.buffer.duration) % tape.buffer.duration;
    }
 
    function setRate(tape, rate) {
@@ -132,11 +157,24 @@
      tape.startPos = getPos(tape);
      tape.startTime = audioCtx.currentTime;
 
-     tape.rate = rate;
-
      if (rate < 0) {
        // TODO Workaround this.
        console.log("negative playback rates not supported by web audio...");
+       // TODO don't make a new reversed buffer every time; just do it when recording is done.
+       let reverseBuffer = audioCtx.createBuffer(1, tape.buffer.length, audioCtx.sampleRate);
+       let reversed = tape.buffer.getChannelData(0).slice(0).reverse();
+       reverseBuffer.copyToChannel(reversed, 0);
+       if (tape.source) {
+         tape.source.disconnect();
+         tape.source = null;
+       }
+       let source = audioCtx.createBufferSource();
+       source.buffer = reverseBuffer;
+       source.loop = true;
+       source.connect(audioCtx.destination);
+       source.start(0);
+       tape.source = source;
+       tape.source.playbackRate.value = -rate;
      } else if (rate === 0) {
        // Also not supported, but here's a workaround.
        if (tape.source) {
@@ -144,6 +182,11 @@
          tape.source = null;
        }
      } else {
+       if (tape.rate < 0) {
+         // Playing reversed.
+         tape.source.disconnect();
+         tape.source = null;
+       }
        if (!tape.source) {
          let source = audioCtx.createBufferSource();
          source.buffer = tape.buffer;
@@ -154,6 +197,7 @@
        }
        tape.source.playbackRate.value = rate;
      }
+     tape.rate = rate;
    }
 
    function _createTape() {
@@ -169,7 +213,7 @@
        startPos: 0
      };
      tapes[name] = tape;
-     sendTape(name, tape);
+     sendCreate(name, tape);
      addTape(name, tape);
    }
 
@@ -191,6 +235,7 @@
        let value = parseFloat(e.target.value);
        setRate(tape, value);
      }
+     tape.dom = entry;
      table.appendChild(entry);
 
      // Add new source and destination options.
@@ -226,6 +271,8 @@
        dst = tapes[dstName];
      }
 
+     dst.dom.getElementsByClassName("tape-position")[0].classList.add("recording-range");
+
      // Chrome bug requires us to add a dummy output:
      // https://bugs.chromium.org/p/chromium/issues/detail?id=327649#c15
      recorder = audioCtx.createScriptProcessor(bufferSize, 1, 1);
@@ -238,6 +285,9 @@
        // and maybe make stopping recording a separate action.
        if (pos > dst.buffer.length) {
          console.log('stop recording');
+
+         dst.dom.getElementsByClassName("tape-position")[0].classList.remove("recording-range");
+
          src.disconnect(recorder);
          recorder.disconnect();
          recorder.onaudioprocess = null;
@@ -248,7 +298,7 @@
            dst.source = null;
          }
          setRate(dst, dst.rate);
-         sendTape(dstName, dst);
+         sendUpdate(dstName, dst);
          return;
        }
        let data = e.inputBuffer.getChannelData(0);
@@ -312,8 +362,7 @@
   </div>
 
   <!-- for bootstrap -->
-  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
-  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+  <script src="jquery-3.4.1.slim.min.js"></script>
+  <script src="bootstrap.bundle.min.js"></script>
 </body>
 </html>
