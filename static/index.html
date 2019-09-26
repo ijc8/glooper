@@ -25,9 +25,6 @@
 </head>
 <body class="bg-light">
   <script>
-   // buffer, source, rate, startTime, startPos.
-   let tapes = {};
-
    var ws = new WebSocket("wss://" + location.hostname + ":8765/");
    ws.binaryType = 'arraybuffer';
 
@@ -66,13 +63,14 @@
      if (obj.event === 'create') {
        // Create a local blank tape.
        let buffer = audioCtx.createBuffer(1, obj.length, audioCtx.sampleRate);
-       let tape = {
+       let tape = Object.create(Tape);
+       Object.assign(tape, {
          buffer,
          source: null,
          rate: 0,
          startPos: 0,
          startTime: audioCtx.currentTime
-       }
+       });
        tapes[obj.name] = tape;
        addTape(obj.name, tape);
      } else if (obj.event == 'update') {
@@ -118,14 +116,17 @@
    // Name idea: grouper looper. group's loops. etc.
    // Note: AudioBufferSourceNode.playbackRate is an AudioParam!
    // So is detune. Interesting.
-   // TODO: websocket server for sharing tapes.
    // TODO: better audio encoding to avoid, possibly chunked tape transfer.
 
    // when tape is created or recorded, send to the server an object with the tape name and data.
    // the server sends this to each client.
    // when the client receives a new tape from the server, it adds it to the local list.
 
-   let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+   let AudioContext = window.AudioContext || window.webkitAudioContext;
+   let audioCtx = new AudioContext({
+     latencyHint: 'interactive',
+     sampleRate: 44100,
+   });
    let microphone;
    let micProcessor;
 
@@ -146,15 +147,27 @@
        _createTape();
    }
 
-   // TODO make this an actual class
-   function getPos(tape) {
-     let pos = ((audioCtx.currentTime - tape.startTime) * tape.rate + tape.startPos);
-     return ((pos % tape.buffer.duration) + tape.buffer.duration) % tape.buffer.duration;
+   // buffer, source, rate, startTime, startPos.
+   let tapes = {};
+
+   let Tape = {
+     buffer: null,
+     source: null,
+     rate: 0,
+     startTime: 0,
+     startPos: 0,
+     getPos: function() {
+       let pos = ((audioCtx.currentTime - this.startTime) * this.rate + this.startPos);
+       return ((pos % this.buffer.duration) + this.buffer.duration) % this.buffer.duration;
+     },
+     setPosition: function(pos) {
+       console.log("TODO");
+     }
    }
 
    function setRate(tape, rate) {
      // Reset startPos and startTime since we're changing playbackRate. Order matters.
-     tape.startPos = getPos(tape);
+     tape.startPos = tape.getPos();
      tape.startTime = audioCtx.currentTime;
 
      if (rate < 0) {
@@ -205,13 +218,14 @@
      let length = parseFloat(document.getElementById("tape-length").value);
      console.log(name, length);
      let buffer = audioCtx.createBuffer(1, length * audioCtx.sampleRate, audioCtx.sampleRate);
-     let tape = {
+     let tape = Object.create(Tape);
+     Object.assign(tape, {
        buffer: buffer,
        source: null,
        rate: 0,
        startTime: audioCtx.currentTime,
        startPos: 0
-     };
+     });
      tapes[name] = tape;
      sendCreate(name, tape);
      addTape(name, tape);
@@ -229,6 +243,10 @@
      entry.getElementsByClassName("tape-length")[0].innerHTML = length;
      let pos = entry.getElementsByClassName("tape-position")[0];
      pos.id = `${name}-position`;
+     pos.onchange = (e) => {
+       let value = parseFloat(e.target.value) / parseFloat(e.target.max) * tape.buffer.duration;
+       tape.setPosition(value);
+     };
      let rate = entry.getElementsByClassName("tape-rate")[0];
      rate.value = tape.rate;
      rate.onchange = (e) => {
@@ -312,7 +330,7 @@
        let tape = tapes[name];
        let slider = document.getElementById(`${name}-position`);
        let time = audioCtx.currentTime;
-       slider.value = getPos(tape) / tape.buffer.duration * parseFloat(slider.max);
+       slider.value = tape.getPos() / tape.buffer.duration * parseFloat(slider.max);
      }
      setTimeout(updatePositions, 30);
    }
