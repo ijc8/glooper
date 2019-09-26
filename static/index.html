@@ -79,11 +79,7 @@
        let tape = tapes[name];
        let buffer = tape.buffer;
        buffer.copyToChannel(data, 0);
-       if (tape.source) {
-         tape.source.disconnect();
-         tape.source = null;
-       }
-       setRate(tape, tape.rate);
+       tape.updateBuffer();
      }
    }
 
@@ -117,6 +113,7 @@
    // Note: AudioBufferSourceNode.playbackRate is an AudioParam!
    // So is detune. Interesting.
    // TODO: better audio encoding to avoid, possibly chunked tape transfer.
+   // TODO: when starting with null source, restore old position.
 
    // when tape is created or recorded, send to the server an object with the tape name and data.
    // the server sends this to each client.
@@ -152,66 +149,86 @@
 
    let Tape = {
      buffer: null,
+     reverseBuffer: null,
      source: null,
      rate: 0,
      startTime: 0,
      startPos: 0,
+
      getPos: function() {
        let pos = ((audioCtx.currentTime - this.startTime) * this.rate + this.startPos);
        return ((pos % this.buffer.duration) + this.buffer.duration) % this.buffer.duration;
      },
-     setPosition: function(pos) {
-       console.log("TODO");
-     }
-   }
+     setPos: function(pos) {
+       // Set startPos, reset startTime, and generate a new source.
+       this.startPos = pos;
+       this.startTime = audioCtx.currentTime;
+       if (this.source) {
+         this.source.disconnect();
+         this.source = null;
+       }
+       this.setRate(this.rate);
+     },
+     updateBuffer: function() {
+       // Browsers differ re. modifying a source's buffer;
+       // for consistency, we make a new source.
+       if (this.source) {
+         this.source.disconnect();
+         this.source = null;
+       }
+       // Also have to invalidate the reverse buffer.
+       this.reverseBuffer = null;
+       this.setRate(this.rate);
+     },
+     setRate: function(rate) {
+      // Reset startPos and startTime since we're changing playbackRate. Order matters.
+      this.startPos = this.getPos();
+      this.startTime = audioCtx.currentTime;
 
-   function setRate(tape, rate) {
-     // Reset startPos and startTime since we're changing playbackRate. Order matters.
-     tape.startPos = tape.getPos();
-     tape.startTime = audioCtx.currentTime;
-
-     if (rate < 0) {
-       // TODO Workaround this.
-       console.log("negative playback rates not supported by web audio...");
-       // TODO don't make a new reversed buffer every time; just do it when recording is done.
-       let reverseBuffer = audioCtx.createBuffer(1, tape.buffer.length, audioCtx.sampleRate);
-       let reversed = tape.buffer.getChannelData(0).slice(0).reverse();
-       reverseBuffer.copyToChannel(reversed, 0);
-       if (tape.source) {
-         tape.source.disconnect();
-         tape.source = null;
-       }
-       let source = audioCtx.createBufferSource();
-       source.buffer = reverseBuffer;
-       source.loop = true;
-       source.connect(audioCtx.destination);
-       source.start(0);
-       tape.source = source;
-       tape.source.playbackRate.value = -rate;
-     } else if (rate === 0) {
-       // Also not supported, but here's a workaround.
-       if (tape.source) {
-         tape.source.disconnect();
-         tape.source = null;
-       }
-     } else {
-       if (tape.rate < 0) {
-         // Playing reversed.
-         tape.source.disconnect();
-         tape.source = null;
-       }
-       if (!tape.source) {
-         let source = audioCtx.createBufferSource();
-         source.buffer = tape.buffer;
-         source.loop = true;
-         source.connect(audioCtx.destination);
-         source.start(0);
-         tape.source = source;
-       }
-       tape.source.playbackRate.value = rate;
-     }
-     tape.rate = rate;
-   }
+      if (rate < 0) {
+        if (!this.reverseBuffer) {
+          this.reverseBuffer = audioCtx.createBuffer(1, this.buffer.length, audioCtx.sampleRate);
+          let reversed = this.buffer.getChannelData(0).slice(0).reverse();
+          this.reverseBuffer.copyToChannel(reversed, 0);
+        }
+        if (this.rate > 0) {
+          this.source.disconnect();
+          this.source = null;
+        }
+        if (!this.source) {
+          let source = audioCtx.createBufferSource();
+          source.buffer = this.reverseBuffer;
+          source.loop = true;
+          source.connect(audioCtx.destination);
+          source.start(0, this.startPos);
+          this.source = source;
+        }
+        this.source.playbackRate.value = -rate;
+      } else if (rate === 0) {
+        // Also not supported, but here's a workaround.
+        if (this.source) {
+          this.source.disconnect();
+          this.source = null;
+        }
+      } else {
+        if (this.rate < 0) {
+          // Playing reversed.
+          this.source.disconnect();
+          this.source = null;
+        }
+        if (!this.source) {
+          let source = audioCtx.createBufferSource();
+          source.buffer = this.buffer;
+          source.loop = true;
+          source.connect(audioCtx.destination);
+          source.start(0, this.startPos);
+          this.source = source;
+        }
+        this.source.playbackRate.value = rate;
+      }
+      this.rate = rate;
+     },
+   };
 
    function _createTape() {
      let name = document.getElementById("tape-name").value;
@@ -245,13 +262,16 @@
      pos.id = `${name}-position`;
      pos.onchange = (e) => {
        let value = parseFloat(e.target.value) / parseFloat(e.target.max) * tape.buffer.duration;
-       tape.setPosition(value);
+       tape.setPos(value);
      };
      let rate = entry.getElementsByClassName("tape-rate")[0];
      rate.value = tape.rate;
+     rate.onclick = (e) => {
+       e.target.select();
+     }
      rate.onchange = (e) => {
        let value = parseFloat(e.target.value);
-       setRate(tape, value);
+       tape.setRate(value);
      }
      tape.dom = entry;
      table.appendChild(entry);
@@ -310,12 +330,8 @@
          recorder.disconnect();
          recorder.onaudioprocess = null;
 
-         // Browsers differ re. modifying the source's buffer, so let's just do this:
-         if (dst.source) {
-           dst.source.disconnect();
-           dst.source = null;
-         }
-         setRate(dst, dst.rate);
+         dst.updateBuffer();
+         dst.setRate(dst.rate);
          sendUpdate(dstName, dst);
          return;
        }
