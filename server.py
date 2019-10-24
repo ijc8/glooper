@@ -73,8 +73,9 @@ async def chat(websocket, path):
         await unregister(websocket)
 
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-localhost_pem = pathlib.Path(__file__).with_name("server.pem")
-ssl_context.load_cert_chain(localhost_pem)
+pem = pathlib.Path(__file__).with_name("certificate.pem")
+key = pathlib.Path(__file__).with_name("key.pem")
+ssl_context.load_cert_chain(pem, keyfile=key)
 
 start_server = websockets.serve(chat, "", 8765, ssl=ssl_context, max_size=None, create_protocol=WebSocketServerProtocolWithHTTP)
 

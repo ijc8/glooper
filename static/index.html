@@ -21,7 +21,11 @@
    }
 
    .tape-rate {
-     width: 50px !important;
+     width: 70px !important;
+   }
+
+   .tape-play {
+     width: 70px !important;
    }
 
    .tape-volume {
@@ -115,15 +119,13 @@
    // the server sends this to each client.
    // when the client receives a new tape from the server, it adds it to the local list.
 
-   // TODO: start/pause buttons
-   // TODO: spacebar to record
-   // TODO: delete key
+   // TODO: delete button
    // TODO: debug position seeking thing in Chrome
 
    let AudioContext = window.AudioContext || window.webkitAudioContext;
    let audioCtx = new AudioContext({
      latencyHint: 'interactive',
-     //sampleRate: 44100,
+     sampleRate: 44100,
    });
    let microphone;
    let micProcessor;
@@ -148,8 +150,18 @@
        this.out = audioCtx.createGain();
        this.out.connect(audioCtx.destination);
        this.rate = 0;
+       this.savedRate = 1;
        this.startTime = 0;
        this.startPos = 0;
+     }
+
+     togglePlay() {
+       if (this.rate === 0) {
+         this.setRate(this.savedRate);
+       } else {
+         this.savedRate = this.rate;
+         this.setRate(0);
+       }
      }
 
      getPos() {
@@ -210,6 +222,9 @@
           this.source.disconnect();
           this.source = null;
         }
+        // Allow restoring the previous rate by pressing "play".
+        if (this.rate !== 0)
+          this.savedRate = this.rate;
       } else {
         if (this.rate < 0) {
           // Playing reversed.
@@ -276,6 +291,12 @@
      rate.onchange = (e) => {
        let value = parseFloat(e.target.value);
        tape.setRate(value);
+       updatePlayState(tape);
+     }
+     let play = entry.getElementsByClassName("tape-play")[0];
+     play.onclick = (e) => {
+       tape.togglePlay();
+       updatePlayState(tape);
      }
      let volume = entry.getElementsByClassName("tape-volume")[0];
      volume.onclick = (e) => {
@@ -351,7 +372,28 @@
      setTimeout(updatePositions, 30);
    }
 
+   function updatePlayState(tape) {
+     let play = tape.dom.getElementsByClassName("tape-play")[0];
+     if (tape.rate === 0) {
+       play.innerHTML = "Play";
+       play.classList.remove("btn-primary");
+       play.classList.add("btn-success");
+     } else {
+       play.innerHTML = "Pause";
+       play.classList.remove("btn-success");
+       play.classList.add("btn-primary");
+     }
+     let rate = tape.dom.getElementsByClassName("tape-rate")[0];
+     rate.value = tape.rate;
+   }
+
    updatePositions();
+
+   document.addEventListener("keypress", function onEvent(event) {
+     if (event.key === " ") {
+       recordTape();
+     }
+   });
   </script>
   <div class="container mt-4">
     <form>
