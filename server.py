@@ -10,6 +10,7 @@ import array
 import time
 import os
 from http import HTTPStatus
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import mimetypes
 
 mimetypes.init()
@@ -79,7 +80,22 @@ ssl_context.load_cert_chain(pem, keyfile=key)
 
 start_server = websockets.serve(chat, "", 8765, ssl=ssl_context, max_size=None, create_protocol=WebSocketServerProtocolWithHTTP)
 
-#start_server = websockets.serve(chat, "", 8765, max_size=None, create_protocol=WebSocketServerProtocolWithHTTP)
+import threading
+
+class RedirectHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        addr = self.headers.get('Host').split(':')[0]
+        self.send_response(307)
+        self.send_header('Location', f'https://{addr}:8765')
+        self.end_headers()
+
+def run():
+    server_address = ('', 80)
+    httpd = HTTPServer(server_address, RedirectHandler)
+    httpd.serve_forever()
+
+t = threading.Thread(target=run)
+t.start()
 
 asyncio.get_event_loop().run_until_complete(start_server)
 asyncio.get_event_loop().run_forever()

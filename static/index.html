@@ -37,6 +37,12 @@
 </head>
 <body class="bg-light">
   <script>
+   // TODO: test gain slider thoroughly
+   // TODO: delete button
+   // TODO: make it so starting a new recording during an old one doesn't break
+   // Section 1: Introduction. "WEB TECHNOLOGIES". Decomposition, focus on shorter and shorter snippets. End up in the slow bog.
+   // Section 2: Typing. Gradual fade in, one at a time. Quiet section. .3-.5 settle range. Then quicker and quicker intro crescendo.
+   // Section 3: "Thank you for coming to the show". Short outro, maybe 30 seconds.
    var ws = new WebSocket("wss://" + location.hostname + ":8765/");
    ws.binaryType = 'arraybuffer';
 
@@ -119,20 +125,19 @@
    // the server sends this to each client.
    // when the client receives a new tape from the server, it adds it to the local list.
 
-   // TODO: delete button
-   // TODO: debug position seeking thing in Chrome
-
    let AudioContext = window.AudioContext || window.webkitAudioContext;
-   let audioCtx = new AudioContext({
-     latencyHint: 'interactive',
-     sampleRate: 44100,
-   });
+   let audioCtx = undefined;
    let microphone;
    let micProcessor;
+   let recording = false;
 
    const bufferSize = 0;
 
    const handleSuccess = (stream) => {
+     audioCtx = new AudioContext({
+       latencyHint: 'interactive',
+       sampleRate: 44100,
+     });
      microphone = audioCtx.createMediaStreamSource(stream);
    };
 
@@ -153,6 +158,9 @@
        this.savedRate = 1;
        this.startTime = 0;
        this.startPos = 0;
+       // This is necessary to prevent a race condition
+       // between position slider onchange and updatePositions:
+       this.lastPos = null;
      }
 
      togglePlay() {
@@ -171,6 +179,7 @@
 
      setPos(pos) {
        // Set startPos, reset startTime, and generate a new source.
+       console.log("setPos: " + pos);
        this.startPos = pos;
        this.startTime = audioCtx.currentTime;
        if (this.source) {
@@ -195,6 +204,7 @@
      setRate(rate) {
       // Reset startPos and startTime since we're changing playbackRate. Order matters.
       this.startPos = this.getPos();
+       console.log("getPos: " + this.startPos);
       this.startTime = audioCtx.currentTime;
 
       if (rate < 0) {
@@ -282,6 +292,7 @@
      pos.onchange = (e) => {
        let value = parseFloat(e.target.value) / parseFloat(e.target.max) * tape.buffer.duration;
        tape.setPos(value);
+       startUpdating = true;
      };
      let rate = entry.getElementsByClassName("tape-rate")[0];
      rate.value = tape.rate;
@@ -300,8 +311,8 @@
      }
      let volume = entry.getElementsByClassName("tape-volume")[0];
      volume.onclick = (e) => {
-       let value = parseFloat(e.target.value);
-       tape.out.gain.value = Math.pow(20, (value/100 - 1));
+       let value = parseFloat(e.target.value) / parseFloat(e.target.max);
+       tape.out.gain.value = Math.pow(10, 48*(value - 1)/20);
      }
      tape.dom = entry;
      table.appendChild(entry);
@@ -314,6 +325,17 @@
    }
 
    function recordTape() {
+     if (recording) {
+       console.log("Already recording!");
+       return;
+     }
+
+     let button = document.getElementById("record-button");
+     button.innerHTML = "Stop Recording";
+     button.classList.remove("btn-danger");
+     button.classList.add("btn-warning");
+     button.onclick = (e) => recording = false;
+
      let dstName = document.getElementById("tape-name").value;
      let dstLength = parseFloat(document.getElementById("tape-length").value);
      let dst = createTape(dstName, dstLength);
@@ -334,18 +356,26 @@
 
      // Chrome bug requires us to add a dummy output:
      // https://bugs.chromium.org/p/chromium/issues/detail?id=327649#c15
-     recorder = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+     let recorder = audioCtx.createScriptProcessor(bufferSize, 1, 1);
      recorder.connect(audioCtx.destination);
      src.connect(recorder);
+     recording = true;
 
      let pos = 0;
+     let lastPos = 0;
      recorder.onaudioprocess = (e) => {
        // TODO Allow recording to start anywhere, handle wrapping,
        // and maybe make stopping recording a separate action.
-       if (pos > dst.buffer.length) {
+       if (pos > dst.buffer.length || !recording) {
          console.log('stop recording');
+         recording = false;
 
          dst.dom.getElementsByClassName("tape-position")[0].classList.remove("recording-range");
+
+         button.innerHTML = "Record";
+         button.classList.remove("btn-warning");
+         button.classList.add("btn-danger");
+         button.onclick = (e) => recordTape();
 
          src.disconnect(recorder);
          recorder.disconnect();
@@ -359,15 +389,25 @@
        let data = e.inputBuffer.getChannelData(0);
        dst.buffer.copyToChannel(data, 0, pos);
        pos += data.length;
+       if (pos - lastPos > audioCtx.sampleRate) {
+         lastPos += audioCtx.sampleRate;
+         let val = parseFloat(document.getElementById("tape-length").value) - 1;
+         document.getElementById("tape-length").value = val;
+       }
      };
    }
 
+   let startUpdating = true;
    function updatePositions() {
      for (let name in tapes) {
        let tape = tapes[name];
        let slider = document.getElementById(`${name}-position`);
        let time = audioCtx.currentTime;
-       slider.value = tape.getPos() / tape.buffer.duration * parseFloat(slider.max);
+       if ((slider.value === tape.lastPos) || (tape.lastPos === null) || startUpdating) {
+         slider.value = tape.getPos() / tape.buffer.duration * parseFloat(slider.max);
+         tape.lastPos = slider.value;
+         startUpdating = false;
+       }
      }
      setTimeout(updatePositions, 30);
    }
@@ -404,7 +444,7 @@
           <option value="" disabled>Source</option>
           <option selected>Microphone</option>
         </select>
-        <button type="button" class="col-2 form-control btn btn-danger" onclick="recordTape()">Record</button><br/>
+        <button id="record-button" type="button" class="col-2 form-control btn btn-danger" onclick="recordTape()">Record</button><br/>
       </div>
     </form>
     <hr>
