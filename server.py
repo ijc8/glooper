@@ -3,7 +3,6 @@
 import ssl
 import pathlib
 import asyncio
-import websockets
 import json
 import logging
 import array
@@ -12,12 +11,15 @@ import os
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import mimetypes
+import threading
+import websockets
 
 mimetypes.init()
 logging.basicConfig()
 
 
-# https://gist.github.com/artizirk/04eb23d957d7916c01ca632bb27d5436
+# Static file server (compatible with websocket library).
+# See https://gist.github.com/artizirk/04eb23d957d7916c01ca632bb27d5436
 class WebSocketServerProtocolWithHTTP(websockets.WebSocketServerProtocol):
     """Implements a simple static file server for WebSocketServer"""
 
@@ -53,6 +55,10 @@ class WebSocketServerProtocolWithHTTP(websockets.WebSocketServerProtocol):
         response_headers.append(('Feature-Policy', "microphone 'self'"))
         return HTTPStatus.OK, response_headers, body
 
+
+# === WebSocket server code ===
+# Essentially a broadcast server; anything sent by one user is broadcast to all others.
+
 USERS = set()
 
 async def register(websocket):
@@ -73,6 +79,7 @@ async def chat(websocket, path):
         print("disconnect")
         await unregister(websocket)
 
+# Configure SSL.
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 pem = pathlib.Path(__file__).with_name("certificate.pem")
 key = pathlib.Path(__file__).with_name("key.pem")
@@ -80,6 +87,7 @@ ssl_context.load_cert_chain(pem, keyfile=key)
 
 start_server = websockets.serve(chat, "", 8765, ssl=ssl_context, max_size=None, create_protocol=WebSocketServerProtocolWithHTTP)
 
+# Convenience server on port 80; just redirects users to https:// with the correct port.
 import threading
 
 class RedirectHandler(BaseHTTPRequestHandler):
@@ -97,5 +105,6 @@ def run():
 t = threading.Thread(target=run)
 t.start()
 
+# Start the real server.
 asyncio.get_event_loop().run_until_complete(start_server)
 asyncio.get_event_loop().run_forever()

@@ -37,12 +37,6 @@
 </head>
 <body class="bg-light">
   <script>
-   // TODO: test gain slider thoroughly
-   // TODO: delete button
-   // TODO: make it so starting a new recording during an old one doesn't break
-   // Section 1: Introduction. "WEB TECHNOLOGIES". Decomposition, focus on shorter and shorter snippets. End up in the slow bog.
-   // Section 2: Typing. Gradual fade in, one at a time. Quiet section. .3-.5 settle range. Then quicker and quicker intro crescendo.
-   // Section 3: "Thank you for coming to the show". Short outro, maybe 30 seconds.
    var ws = new WebSocket("wss://" + location.hostname + ":8765/");
    ws.binaryType = 'arraybuffer';
 
@@ -101,7 +95,7 @@
 
    function sendTape(name, tape) {
      console.log("sendTape");
-     // not the most efficient encoding
+     // not exactly the most efficient encoding
      let encoded = _arrayBufferToBase64(tape.buffer.getChannelData(0).buffer);
      let serializable = {
        name,
@@ -109,17 +103,6 @@
      }
      ws.send(JSON.stringify(serializable));
    }
-
-   // Wild idea: what if the playback rate doubles as the recording rate?
-   // so you can record at different rates, record backwards, etc.
-   // then slider bubble can simply turn red for recording
-   // Special case: if playback rate is 0 when you hit record, automatically change to 1?
-   // Alternative terminology: 'loops' vs 'tapes'
-   // Name idea: grouper looper. group's loops. etc.
-   // Note: AudioBufferSourceNode.playbackRate is an AudioParam!
-   // So is detune. Interesting.
-   // TODO: better audio encoding to avoid, possibly chunked tape transfer.
-   // TODO: when starting with null source, restore old position.
 
    // when tape is created or recorded, send to the server an object with the tape name and data.
    // the server sends this to each client.
@@ -144,7 +127,6 @@
    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
        .then(handleSuccess);
 
-   // buffer, source, rate, startTime, startPos.
    let tapes = {};
 
    class Tape {
